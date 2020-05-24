@@ -1,0 +1,6 @@
+[Unit]
+Description=Runs gitlab-backup once a day
+
+[Timer]
+OnCalendar=daily
+RandomizeDelaySec=7200

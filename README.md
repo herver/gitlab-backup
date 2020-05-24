@@ -26,3 +26,11 @@ The tool requires the API token with the following scopes:
 * `read_repository`
 
 It can be created by going to `<YOUR_GITLAB_INSTALLATION>/profile/personal_access_tokens`
+
+## SystemD integration
+
+The tool comes with sample `service` and `timer` SystemD unit files to run gitlab-backup on a daily basis.
+
+* Move the files in `/etc/systemd/system` (or wherever your distribution wants them)
+* Enable the `timer` unit: `systemctl start gitlab-backup.timer`
+* Check that is it enabled: `systemctl list-timers`
