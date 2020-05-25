@@ -1,4 +1,4 @@
-name: Go
+name: Build
 
 on:
   push:
@@ -25,7 +25,7 @@ jobs:
     - name: Ensure all files were formatted as per gofmt
       run: |
         gofmt -l $(find . -name '*.go') >/dev/null
-        
+
     - name: Get dependencies
       run: |
         go get -v -t -d ./...
