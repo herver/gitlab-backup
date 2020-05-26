@@ -1,5 +1,7 @@
 # gitlab-backup
 
+![](https://github.com/herver/gitlab-backup/workflows/Build/badge.svg)
+
 ## Use case
 
 This small utility is meant to be run via `cron` or `systemd` timers to
