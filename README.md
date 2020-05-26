@@ -5,7 +5,7 @@
 ## Use case
 
 This small utility is meant to be run via `cron` or `systemd` timers to
-backup periodically `git` repositories hosted on a gitlab instance and
+create migration (aka mirroring) tasks between a source (Gitlab) and a destination (Gitea)
 belonging to a specific group
 
 ## Usage
@@ -18,9 +18,13 @@ You can pass arguments via the CLI or by setting environment variables:
 | gitlab-token | GITLAB_TOKEN | Gitlab token |
 | gitlab-endpoint | GITLAB_ENDPOINT | Gitlab URL |
 | gitlab-group | GITLAB_GROUP | Gitlab group to clone repos from |
-| backup-dir | BACKUP_DIR | Where to write clones |
+| gitea-token | GITEA_TOKEN | Gitea token |
+| gitea-endpoint | GITEA_ENDPOINT | Gitea URL |
+| gitea-org| GITEA_ORG | Gitea organisation to mirror to |
 
 ## API Token creation
+
+### Gitlab
 
 The tool requires the API token with the following scopes:
 
@@ -28,6 +32,12 @@ The tool requires the API token with the following scopes:
 * `read_repository`
 
 It can be created by going to `<YOUR_GITLAB_INSTALLATION>/profile/personal_access_tokens`
+
+### Gitea
+
+A standard Gitea Application token is used by the application, it can be created by going to the following URL:
+
+* `https://your-gitea.installation/user/settings/applications`
 
 ## SystemD integration
 

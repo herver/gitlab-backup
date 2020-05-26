@@ -3,45 +3,44 @@ package main
 import (
 	"flag"
 	"fmt"
-	"net/url"
 	"os"
-	"path"
+	"strings"
 
+	"code.gitea.io/sdk/gitea"
 	log "github.com/sirupsen/logrus"
+
 	"github.com/xanzy/go-gitlab"
-	"gopkg.in/src-d/go-git.v4"
-	"gopkg.in/src-d/go-git.v4/plumbing/transport/http"
 )
+
+type gitlabMigrator struct {
+	gl      *gitlab.Client
+	gt      *gitea.Client
+	gtOrgID int
+}
 
 var (
 	debug          bool
-	GitlabUsername string
-	GitlabToken    string
-	GitlabEndpoint string
-	GitlabGroup    string
-	BackupDir      string
+	gitlabUsername string
+	gitlabToken    string
+	gitlabEndpoint string
+	gitlabGroup    string
+	giteaEndpoint  string
+	giteaToken     string
+	giteaOrg       string
+	glm            gitlabMigrator
 )
 
 func init() {
-	flag.StringVar(&GitlabUsername, "gitlab-username", os.Getenv("GITLAB_USERNAME"), "Gitlab username")
-	flag.StringVar(&GitlabToken, "gitlab-token", os.Getenv("GITLAB_TOKEN"), "Gitlab token")
-	flag.StringVar(&GitlabEndpoint, "gitlab-endpoint", os.Getenv("GITLAB_ENDPOINT"), "Gitlab endpoint")
-	flag.StringVar(&GitlabGroup, "gitlab-group", os.Getenv("GITLAB_GROUP"), "Gitlab group to clone repos frome")
-	flag.StringVar(&BackupDir, "backup-dir", os.Getenv("BACKUP_DIR"), "Where to create the clones")
+	flag.StringVar(&gitlabUsername, "gitlab-username", os.Getenv("GITLAB_USERNAME"), "Gitlab username")
+	flag.StringVar(&gitlabToken, "gitlab-token", os.Getenv("GITLAB_TOKEN"), "Gitlab token")
+	flag.StringVar(&gitlabEndpoint, "gitlab-endpoint", os.Getenv("GITLAB_ENDPOINT"), "Gitlab endpoint")
+	flag.StringVar(&gitlabGroup, "gitlab-group", os.Getenv("GITLAB_GROUP"), "Gitlab group to clone repos frome")
+	flag.StringVar(&giteaToken, "gitea-token", os.Getenv("GITEA_TOKEN"), "Gitea token")
+	flag.StringVar(&giteaEndpoint, "gitea-endpoint", os.Getenv("GITEA_ENDPOINT"), "Gitea endpoint")
+	flag.StringVar(&giteaOrg, "gitea-org", os.Getenv("GITEA_ORG"), "Gitea organisation")
 	flag.BoolVar(&debug, "debug", isEnvDefined("DEBUG"), "enable debug output")
 
 	flag.Parse()
-
-	if debug {
-		log.SetLevel(log.DebugLevel)
-	}
-
-	// Sanity checks
-	if GitlabUsername == "" || GitlabToken == "" || GitlabEndpoint == "" || GitlabGroup == "" || BackupDir == "" {
-		flag.PrintDefaults()
-		os.Exit(1)
-	}
-
 }
 
 func isEnvDefined(key string) bool {
@@ -50,91 +49,110 @@ func isEnvDefined(key string) bool {
 }
 
 func main() {
-	git, err := gitlab.NewClient(GitlabToken, gitlab.WithBaseURL(GitlabEndpoint))
-	if err != nil {
-		log.WithField("err", err).Fatal("Failed to create client")
+
+	if debug {
+		log.SetLevel(log.DebugLevel)
 	}
 
-	groups, res, err := git.Groups.SearchGroup(GitlabGroup)
+	// Sanity checks
+	if gitlabUsername == "" || gitlabToken == "" || gitlabEndpoint == "" || gitlabGroup == "" || giteaEndpoint == "" || giteaToken == "" || giteaOrg == "" {
+		flag.PrintDefaults()
+		os.Exit(1)
+	}
+
+	// gitlab client
+	lab, err := gitlab.NewClient(gitlabToken, gitlab.WithBaseURL(gitlabEndpoint))
+	if err != nil {
+		log.WithField("err", err).Fatal("Failed to create Gitlab client")
+	}
+
+	// gitea client
+	tea := gitea.NewClient(giteaEndpoint, giteaToken)
+	glm = gitlabMigrator{
+		gl: lab,
+		gt: tea,
+	}
+
+	// Populate destination Gitea Organisation ID
+	if glm.gtOrgID, err = glm.getGiteaOrganisationID(giteaOrg); err != nil {
+		log.WithError(err).Fatal("Unable to fetch Gitea organisation")
+	}
+
+	projects, err := glm.fetchGitlabProjects(gitlabGroup)
+
+	for _, p := range projects {
+		glm.createGiteaMigration(p)
+	}
+}
+
+func (glm *gitlabMigrator) fetchGitlabProjects(group string) ([]*gitlab.Project, error) {
+	listProjects := []*gitlab.Project{}
+
+	groups, res, err := glm.gl.Groups.SearchGroup(group)
+
 	if err != nil {
 		log.WithFields(
 			log.Fields{
 				"err":   err,
-				"group": GitlabGroup,
-			}).Fatal("Unable to search for group")
+				"group": group,
+			}).Error("Unable to search for group")
+		return nil, err
 	}
 	if res.TotalItems != 1 {
 		log.WithField("count", res.TotalItems).Fatal("Could not get exact group match")
+		return nil, fmt.Errorf("Could not get exact group match (found %d", res.TotalItems)
 	}
 
 	for _, g := range groups {
-		projects, _, err := git.Groups.ListGroupProjects(g.ID, nil)
+		projects, _, err := glm.gl.Groups.ListGroupProjects(g.ID, nil)
 		if err != nil {
 			log.WithFields(
 				log.Fields{
 					"err":   err,
-					"group": GitlabGroup,
-				}).Fatal("Unable to list projects")
+					"group": group,
+				}).Error("Unable to list projects")
 		}
 		for _, p := range projects {
-			log.WithField("url", p.HTTPURLToRepo).Info("Cloning repository...")
-			err := backupGitRepo(p.HTTPURLToRepo)
-			if err != nil {
-				log.WithField("err", err).Error("Unable to clone GIT repo")
-				continue
-			}
+			log.WithField("url", p.HTTPURLToRepo).Debug("Adding repository...")
+			listProjects = append(listProjects, p)
 		}
-
 	}
+
+	return listProjects, nil
 }
 
-func backupGitRepo(remote string) error {
-	// Sanity checks
-	u, err := url.Parse(remote)
+func (glm *gitlabMigrator) getGiteaOrganisationID(org string) (int, error) {
+	teaOrg, err := glm.gt.GetOrg(org)
+	if err != nil {
+		return 0, err
+	}
+	return int(teaOrg.ID), nil
+}
+
+func (glm *gitlabMigrator) createGiteaMigration(remote *gitlab.Project) error {
+
+	_, err := glm.gt.GetMyUserInfo() // Test Credentials
 	if err != nil {
 		return err
 	}
-	if u.Scheme != "https" {
-		return fmt.Errorf("%s is not supported at the moment", u.Scheme)
-	}
 
-	destPath := path.Join(BackupDir, u.Path)
+	_, err = glm.gt.MigrateRepo(gitea.MigrateRepoOption{
+		CloneAddr:    remote.HTTPURLToRepo,
+		AuthUsername: gitlabUsername,
+		AuthPassword: gitlabToken,
+		UID:          glm.gtOrgID,
+		RepoName:     remote.Name,
+		Description:  remote.Description,
+		Mirror:       true,
+	})
 
-	// If destPath isn't a git repo, clone
-	if _, err := os.Stat(path.Join(destPath, ".git")); os.IsNotExist(err) {
-		log.WithField("repo", remote).Info("Cloning new repository")
-		_, err = git.PlainClone(destPath, false, &git.CloneOptions{
-			URL: remote,
-			Auth: &http.BasicAuth{
-				Username: GitlabUsername,
-				Password: GitlabToken,
-			},
-		})
-
-		if err != nil {
-			return err
+	if err != nil {
+		if strings.HasPrefix(err.Error(), "409") {
+			log.WithField("src", remote.HTTPURLToRepo).Debug("Repository is already mirrored")
+		} else {
+			log.WithError(err).Error("Unable to clone repository")
 		}
-	} else {
-		// Otherwise just git pull
-		repo, err := git.PlainOpen(destPath)
-		log.Debug("Opening repository")
-		if err != nil {
-			return err
-		}
-
-		w, err := repo.Worktree()
-		log.Debug("Opening worktree")
-		if err != nil {
-			return err
-		}
-
-		log.Debug("Pulling from default remote")
-		w.Pull(&git.PullOptions{
-			RemoteName: "origin",
-		})
-		if err != nil {
-			return err
-		}
+		return err
 	}
 
 	return nil
