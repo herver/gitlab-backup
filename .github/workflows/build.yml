@@ -1,19 +1,18 @@
 name: Build
 
-on:
-  push:
-    branches: [ master ]
-  pull_request:
-    branches: [ master ]
+on: [push]
 
 jobs:
 
   build:
     name: Build
-    runs-on: ubuntu-latest
-    steps:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macOS-latest]
 
-    - name: Set up Go 1.x
+    steps:
+    - name: Set up Go 1.14
       uses: actions/setup-go@v2
       with:
         go-version: ^1.14
@@ -35,3 +34,9 @@ jobs:
 
     - name: Test
       run: go test -v .
+      
+    - name: Save artifacts
+      uses: actions/upload-artifact@v1
+      with:
+        name: gitlab-backup-${{ matrix.os }}
+        path: gitlab-backup 
