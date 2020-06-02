@@ -28,6 +28,11 @@ var (
 	giteaToken     string
 	giteaOrg       string
 	glm            gitlabMigrator
+
+	commit  string
+	builtAt string
+	builtBy string
+	builtOn string
 )
 
 func init() {
@@ -49,6 +54,9 @@ func isEnvDefined(key string) bool {
 }
 
 func main() {
+	fmt.Print("Version info :: ")
+	fmt.Printf("commit: %s ", commit)
+	fmt.Printf("built @ %s by %s on %s\n", builtAt, builtBy, builtOn)
 
 	if debug {
 		log.SetLevel(log.DebugLevel)
