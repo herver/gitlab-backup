@@ -1,3 +1,5 @@
+#!/bin/bash
+
 commit=`git rev-parse --short HEAD`
 built_at=`date +%FT%T%z`
 built_by=${USER}
